@@ -1,0 +1,64 @@
+name: Retirar de Hetzner
+
+# Quita M3U Player del VPS compartido: su sitio de Caddy, el contenedor, sus
+# imágenes y /opt/m3u-player. No toca el resto de webs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-m3u-player
+  cancel-in-progress: false
+
+env:
+  SERVER: root@167.233.99.156
+
+jobs:
+  undeploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Preparar SSH
+        env:
+          HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$HETZNER_SSH_KEY" | tr -d '\r' > ~/.ssh/hetzner
+          chmod 600 ~/.ssh/hetzner
+          ssh-keyscan -H 167.233.99.156 >> ~/.ssh/known_hosts 2>/dev/null
+          printf 'Host 167.233.99.156\n  IdentityFile ~/.ssh/hetzner\n  IdentitiesOnly yes\n' >> ~/.ssh/config
+
+      - name: Retirar sitio de Caddy
+        run: |
+          ssh "$SERVER" 'bash -s' <<'EOS'
+          set -e
+          rm -f /opt/tilestudio/sites/m3u-player.caddy
+          docker exec tilestudio-caddy-1 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker exec tilestudio-caddy-1 caddy reload --config /etc/caddy/Caddyfile
+          echo "Sitio de Caddy retirado"
+          EOS
+
+      - name: Parar y borrar contenedor, imágenes y carpeta
+        run: |
+          ssh "$SERVER" 'bash -s' <<'EOS' | tee -a "$GITHUB_STEP_SUMMARY"
+          set -e
+          echo "Antes:   $(df -h --output=avail / | tail -1) libres"
+          if [ -f /opt/m3u-player/docker-compose.yml ]; then
+            (cd /opt/m3u-player && docker compose --env-file .deploy.env down --remove-orphans 2>/dev/null || docker compose down --remove-orphans)
+          fi
+          docker rm -f m3u-player-app 2>/dev/null || true
+          docker image ls m3u-player --format '{{.Repository}}:{{.Tag}}' | xargs -r docker rmi
+          rm -rf /opt/m3u-player
+          echo "Después: $(df -h --output=avail / | tail -1) libres"
+          echo
+          echo "Contenedores en marcha:"
+          docker ps --format "  {{.Names}}\t{{.Status}}"
+          EOS
+
+      - name: Comprobar que ya no responde
+        run: |
+          CODE=$(curl -s -o /dev/null -m 15 -w "%{http_code}" https://iptv.167-233-99-156.sslip.io/health || true)
+          echo "https://iptv.167-233-99-156.sslip.io/health -> $CODE" | tee -a "$GITHUB_STEP_SUMMARY"
+          [[ "$CODE" != "200" ]]
