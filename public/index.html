@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1115">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="M3U Player">
+  <title>M3U Player</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Pantalla de clave de acceso (solo si el servidor define ACCESS_KEY) -->
+  <section id="view-key" class="view center hidden">
+    <form id="key-form" class="card">
+      <h1>M3U Player</h1>
+      <p class="muted">Este servidor está protegido.</p>
+      <label>Clave de acceso<input id="key-input" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary" type="submit">Entrar</button>
+      <p id="key-error" class="error"></p>
+    </form>
+  </section>
+
+  <!-- Inicio de sesión IPTV -->
+  <section id="view-login" class="view center hidden">
+    <form id="login-form" class="card" novalidate>
+      <h1>M3U Player</h1>
+      <div class="seg" role="tablist">
+        <button type="button" class="seg-btn active" data-mode="xtream">Usuario / contraseña</button>
+        <button type="button" class="seg-btn" data-mode="m3u">URL M3U</button>
+      </div>
+      <div class="mode-xtream">
+        <label>Servidor<input id="f-server" type="text" inputmode="url" placeholder="http://servidor.com:8080" autocapitalize="off" autocorrect="off"></label>
+        <label>Usuario<input id="f-user" autocomplete="username" autocapitalize="off" autocorrect="off"></label>
+        <label>Contraseña<input id="f-pass" type="password" autocomplete="current-password"></label>
+      </div>
+      <div class="mode-m3u hidden">
+        <label>URL de la lista<input id="f-m3u" type="url" inputmode="url" placeholder="http://servidor.com/get.php?username=...&type=m3u_plus" autocapitalize="off" autocorrect="off"></label>
+      </div>
+      <label class="row"><input id="f-direct" type="checkbox"> Reproducir en directo sin proxy (menos carga en el servidor, puede fallar por CORS)</label>
+      <button class="btn primary" type="submit" id="login-btn">Conectar</button>
+      <p id="login-error" class="error"></p>
+      <div id="profiles"></div>
+    </form>
+  </section>
+
+  <!-- App principal -->
+  <section id="view-main" class="view hidden">
+    <header class="topbar">
+      <nav class="tabs" id="tabs">
+        <button data-tab="live" class="active">TV en directo</button>
+        <button data-tab="vod">Películas</button>
+        <button data-tab="series">Series</button>
+        <button data-tab="fav">Favoritos</button>
+      </nav>
+      <div class="top-actions">
+        <input id="search" type="search" placeholder="Buscar…" autocomplete="off">
+        <button class="icon-btn" id="btn-account" title="Cuenta">⚙︎</button>
+      </div>
+    </header>
+    <div class="layout">
+      <aside id="categories" class="categories"></aside>
+      <main class="content">
+        <div id="crumbs" class="crumbs"></div>
+        <div id="list" class="list"></div>
+        <div id="list-sentinel"></div>
+        <p id="list-status" class="muted center-text"></p>
+      </main>
+    </div>
+  </section>
+
+  <!-- Reproductor -->
+  <section id="player" class="player hidden">
+    <div class="player-top">
+      <button class="icon-btn" id="pl-close" title="Cerrar">✕</button>
+      <div class="pl-title-wrap">
+        <div id="pl-title" class="pl-title"></div>
+        <div id="pl-epg" class="pl-epg"></div>
+      </div>
+      <button class="icon-btn" id="pl-prev" title="Anterior">⏮</button>
+      <button class="icon-btn" id="pl-next" title="Siguiente">⏭</button>
+    </div>
+    <video id="video" controls playsinline webkit-playsinline autoplay></video>
+    <div id="pl-msg" class="pl-msg hidden"></div>
+  </section>
+
+  <!-- Diálogo de cuenta -->
+  <dialog id="account">
+    <h2>Cuenta</h2>
+    <div id="account-info" class="account-info"></div>
+    <div class="dialog-actions">
+      <button class="btn" id="btn-reload">Recargar listas</button>
+      <button class="btn danger" id="btn-logout">Cerrar sesión</button>
+      <button class="btn" id="btn-close-account">Cerrar</button>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
