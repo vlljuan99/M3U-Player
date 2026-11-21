@@ -48,8 +48,7 @@ jobs:
           fi
           [[ "$SOLO" == "true" ]] && exit 0
           if [[ ${#M3U_ACCESS_KEY} -lt 16 ]]; then
-            echo "::error title=Falta M3U_ACCESS_KEY::La app quedará en Internet: añade el secreto M3U_ACCESS_KEY con una clave de 16 caracteres o más."
-            exit 1
+            echo "::warning title=M3U_ACCESS_KEY corta o ausente::Se usará una clave aleatoria generada y guardada solo en el VPS (/opt/m3u-player/app.env). No se muestra en los logs."
           fi
           if [[ -z "$M3U_IPTV_HOSTS" ]]; then
             echo "::error title=Falta M3U_IPTV_HOSTS::Añade el secreto M3U_IPTV_HOSTS con el host:puerto de tu proveedor (p. ej. proveedor.com:8080) para que el proxy solo hable con él."
@@ -132,13 +131,24 @@ jobs:
           M3U_ACCESS_KEY: ${{ secrets.M3U_ACCESS_KEY }}
           M3U_IPTV_HOSTS: ${{ secrets.M3U_IPTV_HOSTS }}
         run: |
+          # Si el secreto tiene 16+ caracteres manda él. Si no, se conserva la
+          # clave que ya hubiera en el VPS o se genera una aleatoria allí mismo.
+          # La clave generada nunca sale del servidor (los logs son públicos).
+          KEY=""
+          [[ ${#M3U_ACCESS_KEY} -ge 16 ]] && KEY="$M3U_ACCESS_KEY"
           {
-            echo "ACCESS_KEY='$M3U_ACCESS_KEY'"
+            echo "$KEY"
             echo "IPTV_HOSTS='$M3U_IPTV_HOSTS'"
           } | ssh "$SERVER" 'set -e; umask 077; mkdir -p /opt/m3u-player; cd /opt/m3u-player
+            read -r KEY
             SECRET=$(grep -s "^SECRET=" app.env | cut -d= -f2- || true)
             [ -n "$SECRET" ] || SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d " \n")
-            { echo "PORT=8080"; echo "HOST=0.0.0.0"; echo "TRUST_PROXY=1"; echo "TZ=Europe/Madrid"; echo "SECRET=$SECRET"; cat; } > app.env.new
+            if [ -z "$KEY" ]; then
+              KEY=$(grep -s "^ACCESS_KEY=" app.env | cut -d= -f2- | tr -d "\047" || true)
+              [ ${#KEY} -ge 16 ] || KEY=$(head -c 512 /dev/urandom | tr -dc "A-Za-z0-9" | head -c 24)
+              echo "Clave de acceso: generada o conservada en el VPS (no se muestra)"
+            fi
+            { echo "PORT=8080"; echo "HOST=0.0.0.0"; echo "TRUST_PROXY=1"; echo "TZ=Europe/Madrid"; echo "SECRET=$SECRET"; printf "ACCESS_KEY=\047%s\047\n" "$KEY"; cat; } > app.env.new
             mv app.env.new app.env'
           echo "app.env actualizado"
 
