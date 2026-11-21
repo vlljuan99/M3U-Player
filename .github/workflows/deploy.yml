@@ -27,6 +27,10 @@ env:
   # Si algún día usas un dominio propio, cámbialo aquí y apunta su registro A a la IP.
   APP_HOST: iptv.167-233-99-156.sslip.io
   MIN_FREE_MB: 1500
+  # Servidor(es) de tu proveedor IPTV a los que el proxy puede conectarse
+  # (host o host:puerto, separados por comas). No es secreto: usuario y
+  # contraseña NO van aquí, se escriben en la app y se quedan en el dispositivo.
+  M3U_IPTV_HOSTS: line1.psp-49.xyz
 
 jobs:
   deploy:
@@ -39,7 +43,6 @@ jobs:
         env:
           HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
           M3U_ACCESS_KEY: ${{ secrets.M3U_ACCESS_KEY }}
-          M3U_IPTV_HOSTS: ${{ secrets.M3U_IPTV_HOSTS }}
           SOLO: ${{ inputs.solo_comprobar }}
         run: |
           if [[ -z "$HETZNER_SSH_KEY" ]]; then
@@ -50,8 +53,8 @@ jobs:
           if [[ ${#M3U_ACCESS_KEY} -lt 16 ]]; then
             echo "::warning title=M3U_ACCESS_KEY corta o ausente::Se usará una clave aleatoria generada y guardada solo en el VPS (/opt/m3u-player/app.env). No se muestra en los logs."
           fi
-          if [[ -z "$M3U_IPTV_HOSTS" ]]; then
-            echo "::error title=Falta M3U_IPTV_HOSTS::Añade el secreto M3U_IPTV_HOSTS con el host:puerto de tu proveedor (p. ej. proveedor.com:8080) para que el proxy solo hable con él."
+          if [[ -z "$M3U_IPTV_HOSTS" || "$M3U_IPTV_HOSTS" == *[/\ =@]* ]]; then
+            echo "::error title=M3U_IPTV_HOSTS no válido::Debe ser solo host o host:puerto (p. ej. proveedor.com:8080), sin http://, rutas ni credenciales."
             exit 1
           fi
           for v in "$M3U_ACCESS_KEY" "$M3U_IPTV_HOSTS"; do
@@ -129,7 +132,6 @@ jobs:
         if: ${{ !inputs.solo_comprobar }}
         env:
           M3U_ACCESS_KEY: ${{ secrets.M3U_ACCESS_KEY }}
-          M3U_IPTV_HOSTS: ${{ secrets.M3U_IPTV_HOSTS }}
         run: |
           # Si el secreto tiene 16+ caracteres manda él. Si no, se conserva la
           # clave que ya hubiera en el VPS o se genera una aleatoria allí mismo.
@@ -199,11 +201,10 @@ jobs:
       - name: ¿Llega el VPS a tu proveedor IPTV?
         if: ${{ !inputs.solo_comprobar }}
         env:
-          M3U_IPTV_HOSTS: ${{ secrets.M3U_IPTV_HOSTS }}
         run: |
           for h in ${M3U_IPTV_HOSTS//,/ }; do
             CODE=$(ssh "$SERVER" "curl -s -o /dev/null -m 10 -w '%{http_code}' 'http://$h/player_api.php'" || true)
-            if [[ "$CODE" =~ ^(200|401|403)$ ]]; then
+            if [[ -n "$CODE" && "$CODE" != "000" ]]; then
               echo "Proveedor $h: responde desde el VPS (HTTP $CODE)" | tee -a "$GITHUB_STEP_SUMMARY"
             else
               echo "::warning title=Proveedor no accesible::$h no responde desde el VPS (código $CODE). Puede que bloquee IPs de centros de datos."
