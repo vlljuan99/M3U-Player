@@ -200,7 +200,6 @@ jobs:
       # Algunos proveedores bloquean IPs de centros de datos: aviso, no error.
       - name: ¿Llega el VPS a tu proveedor IPTV?
         if: ${{ !inputs.solo_comprobar }}
-        env:
         run: |
           for h in ${M3U_IPTV_HOSTS//,/ }; do
             CODE=$(ssh "$SERVER" "curl -s -o /dev/null -m 10 -w '%{http_code}' 'http://$h/player_api.php'" || true)
