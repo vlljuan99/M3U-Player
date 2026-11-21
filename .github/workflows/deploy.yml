@@ -9,6 +9,10 @@ on:
         description: "Solo comprobar el VPS (disco, memoria, contenedores), sin desplegar"
         type: boolean
         default: false
+      limpiar_docker:
+        description: "Antes, liberar disco: borrar la caché de construcción de Docker y las imágenes que no usa ningún contenedor (se pierden las imágenes de rollback de todas las webs)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -71,6 +75,18 @@ jobs:
           }
           ssh-keyscan -H 167.233.99.156 >> ~/.ssh/known_hosts 2>/dev/null
           printf 'Host 167.233.99.156\n  IdentityFile ~/.ssh/hetzner\n  IdentitiesOnly yes\n' >> ~/.ssh/config
+
+      - name: Liberar disco en el VPS
+        if: ${{ inputs.limpiar_docker }}
+        run: |
+          ssh "$SERVER" 'bash -s' <<'EOS' | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "### Limpieza de Docker"
+          echo "    Antes:   $(df -h --output=avail / | tail -1) libres"
+          docker builder prune -af >/dev/null
+          docker image prune -af >/dev/null
+          echo "    Después: $(df -h --output=avail / | tail -1) libres"
+          echo
+          EOS
 
       # Informe del VPS: aparece en el resumen del job. Falla si queda poco disco.
       - name: Estado del VPS (disco, memoria, contenedores)
