@@ -22,7 +22,7 @@ Tu usuario y contraseña se guardan **solo en tu dispositivo** (localStorage). E
 ## Uso en Windows
 
 1. Instala [Node.js](https://nodejs.org) (versión 18 o superior).
-2. Haz doble clic en `start-windows.bat`. Se abrirá `http://localhost:8080`.
+2. Haz doble clic en `start-windows.bat`. Se abrirá `http://localhost:8080`. Por defecto **solo es accesible desde ese PC** y el proxy solo habla con tu proveedor (`IPTV_HOSTS`). Para usarlo también desde el iPhone en tu Wi-Fi, edita el `.bat` y activa `HOST=0.0.0.0` junto con una `ACCESS_KEY`.
 3. Introduce el servidor, el usuario y la contraseña.
 4. (Opcional) En Edge o Chrome, abre el menú y elige **Instalar M3U Player** para tenerlo como aplicación con su propio icono.
 

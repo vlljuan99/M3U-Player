@@ -314,9 +314,14 @@ server.listen(PORT, HOST, () => {
   const ips = Object.values(nets).flat().filter((n) => n && n.family === 'IPv4' && !n.internal).map((n) => n.address);
   console.log(`\nM3U Player escuchando en el puerto ${PORT}`);
   console.log(`  En este equipo:      http://localhost:${PORT}`);
-  ips.forEach((ip) => console.log(`  En tu red (iPhone):  http://${ip}:${PORT}`));
+  const localOnly = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1';
+  if (localOnly) {
+    console.log('  Solo accesible desde este equipo.');
+  } else {
+    ips.forEach((ip) => console.log(`  En tu red (iPhone):  http://${ip}:${PORT}`));
+    if (!ACCESS_KEY) console.log('  Aviso: sin ACCESS_KEY -> cualquiera en tu red puede usar la app.');
+  }
   if (!ALLOWED.length) console.log('\n  Aviso: IPTV_HOSTS vacío -> el proxy acepta cualquier host.');
-  if (!ACCESS_KEY) console.log('  Aviso: sin ACCESS_KEY -> cualquiera en tu red puede usar la app.');
   console.log('');
 });
 
