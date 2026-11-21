@@ -106,3 +106,23 @@ test('evita salir de la carpeta pública', async () => {
   const r = await fetch(`http://127.0.0.1:${appPort}/..%2fserver%2fserver.js`);
   assert.notStrictEqual(r.status, 200);
 });
+
+test('con ACCESS_KEY: exige clave y limita intentos', async () => {
+  const port = appPort + 1;
+  const p = spawn(process.execPath, [path.join(__dirname, '..', 'server', 'server.js')], {
+    env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', ACCESS_KEY: 'clave-de-prueba-larga' }, stdio: 'ignore',
+  });
+  try {
+    for (let i = 0; i < 50; i++) { try { await fetch(`http://127.0.0.1:${port}/health`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+    const base = `http://127.0.0.1:${port}`;
+    assert.strictEqual((await fetch(`${base}/proxy?u=http://example.com/`)).status, 401);
+    const ok = await fetch(`${base}/auth`, { method: 'POST', body: JSON.stringify({ key: 'clave-de-prueba-larga' }) });
+    assert.strictEqual(ok.status, 200);
+    const cookie = ok.headers.get('set-cookie').split(';')[0];
+    const cfg = await (await fetch(`${base}/config`, { headers: { cookie } })).json();
+    assert.deepStrictEqual(cfg, { needsKey: true, authorized: true });
+    let last;
+    for (let i = 0; i < 11; i++) last = await fetch(`${base}/auth`, { method: 'POST', body: JSON.stringify({ key: 'mal' }) });
+    assert.strictEqual(last.status, 429);
+  } finally { p.kill(); }
+});

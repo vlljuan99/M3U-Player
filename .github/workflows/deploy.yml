@@ -1,0 +1,189 @@
+name: Deploy to Hetzner
+
+# Se lanza a mano desde la pestaña Actions. Marca «Solo comprobar el VPS» para
+# ver cuánto disco, memoria y CPU quedan sin desplegar nada.
+on:
+  workflow_dispatch:
+    inputs:
+      solo_comprobar:
+        description: "Solo comprobar el VPS (disco, memoria, contenedores), sin desplegar"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-m3u-player
+  cancel-in-progress: false
+
+env:
+  SERVER: root@167.233.99.156
+  # Dirección pública sin necesidad de comprar dominio (sslip.io resuelve a la IP).
+  # Si algún día usas un dominio propio, cámbialo aquí y apunta su registro A a la IP.
+  APP_HOST: iptv.167-233-99-156.sslip.io
+  MIN_FREE_MB: 1500
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Comprobar secretos
+        env:
+          HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+          M3U_ACCESS_KEY: ${{ secrets.M3U_ACCESS_KEY }}
+          M3U_IPTV_HOSTS: ${{ secrets.M3U_IPTV_HOSTS }}
+          SOLO: ${{ inputs.solo_comprobar }}
+        run: |
+          if [[ -z "$HETZNER_SSH_KEY" ]]; then
+            echo "::error title=Falta HETZNER_SSH_KEY::Añade la clave privada SSH del VPS en Settings → Secrets and variables → Actions (la misma que usan gatitos, tri-dnd y el resto)."
+            exit 1
+          fi
+          [[ "$SOLO" == "true" ]] && exit 0
+          if [[ ${#M3U_ACCESS_KEY} -lt 16 ]]; then
+            echo "::error title=Falta M3U_ACCESS_KEY::La app quedará en Internet: añade el secreto M3U_ACCESS_KEY con una clave de 16 caracteres o más."
+            exit 1
+          fi
+          if [[ -z "$M3U_IPTV_HOSTS" ]]; then
+            echo "::error title=Falta M3U_IPTV_HOSTS::Añade el secreto M3U_IPTV_HOSTS con el host:puerto de tu proveedor (p. ej. proveedor.com:8080) para que el proxy solo hable con él."
+            exit 1
+          fi
+          for v in "$M3U_ACCESS_KEY" "$M3U_IPTV_HOSTS"; do
+            if [[ "$v" == *"'"* || "$v" == *$'\n'* ]]; then
+              echo "::error::Los secretos M3U_* no pueden llevar comillas simples ni saltos de línea."
+              exit 1
+            fi
+          done
+
+      - name: Preparar SSH
+        env:
+          HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$HETZNER_SSH_KEY" | tr -d '\r' > ~/.ssh/hetzner
+          chmod 600 ~/.ssh/hetzner
+          ssh-keygen -y -f ~/.ssh/hetzner > /dev/null || {
+            echo "::error title=HETZNER_SSH_KEY no válida::Pega el fichero completo de la clave privada, incluidas las líneas BEGIN y END."
+            exit 1
+          }
+          ssh-keyscan -H 167.233.99.156 >> ~/.ssh/known_hosts 2>/dev/null
+          printf 'Host 167.233.99.156\n  IdentityFile ~/.ssh/hetzner\n  IdentitiesOnly yes\n' >> ~/.ssh/config
+
+      # Informe del VPS: aparece en el resumen del job. Falla si queda poco disco.
+      - name: Estado del VPS (disco, memoria, contenedores)
+        run: |
+          ssh "$SERVER" 'bash -s' > report.txt <<'EOS'
+          echo "### Disco"; df -h / | sed "s/^/    /"
+          echo; echo "### Memoria"; free -h | sed "s/^/    /"
+          echo; echo "### Carga (1, 5, 15 min) y CPUs"; echo "    $(cut -d" " -f1-3 /proc/loadavg) · $(nproc) CPU"
+          echo; echo "### Docker"; docker system df | sed "s/^/    /"
+          echo; echo "### Contenedores en marcha"; docker ps --format "{{.Names}}\t{{.Status}}" | sed "s/^/    /"
+          echo; echo "FREE_MB=$(df -BM --output=avail / | tail -1 | tr -dc 0-9)"
+          EOS
+          grep -v '^FREE_MB=' report.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          FREE_MB=$(grep '^FREE_MB=' report.txt | cut -d= -f2)
+          echo "Libre en /: ${FREE_MB} MB" | tee -a "$GITHUB_STEP_SUMMARY"
+          if (( FREE_MB < MIN_FREE_MB )); then
+            echo "::error title=Poco disco en el VPS::Solo quedan ${FREE_MB} MB libres (mínimo ${MIN_FREE_MB}). Libera espacio (p. ej. 'docker image prune', backups antiguos) antes de desplegar."
+            exit 1
+          fi
+
+      - name: Comprobar el Caddy compartido
+        if: ${{ !inputs.solo_comprobar }}
+        run: |
+          ssh "$SERVER" 'test -d /opt/tilestudio/sites && docker network inspect tilestudio_default >/dev/null && docker ps --format "{{.Names}}" | grep -qx tilestudio-caddy-1' || {
+            echo "::error::No encuentro el Caddy compartido de tilestudio (/opt/tilestudio/sites, la red tilestudio_default o el contenedor tilestudio-caddy-1)."
+            exit 1
+          }
+
+      - uses: actions/setup-node@v4
+        if: ${{ !inputs.solo_comprobar }}
+        with:
+          node-version: 22
+
+      - name: Pruebas
+        if: ${{ !inputs.solo_comprobar }}
+        run: npm test
+
+      # app.env se reescribe en cada despliegue (para que cambiar los secretos
+      # tenga efecto), pero SECRET se conserva para no invalidar URLs firmadas.
+      - name: Configuración de la app en el servidor
+        if: ${{ !inputs.solo_comprobar }}
+        env:
+          M3U_ACCESS_KEY: ${{ secrets.M3U_ACCESS_KEY }}
+          M3U_IPTV_HOSTS: ${{ secrets.M3U_IPTV_HOSTS }}
+        run: |
+          {
+            echo "ACCESS_KEY='$M3U_ACCESS_KEY'"
+            echo "IPTV_HOSTS='$M3U_IPTV_HOSTS'"
+          } | ssh "$SERVER" 'set -e; umask 077; mkdir -p /opt/m3u-player; cd /opt/m3u-player
+            SECRET=$(grep -s "^SECRET=" app.env | cut -d= -f2- || true)
+            [ -n "$SECRET" ] || SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d " \n")
+            { echo "PORT=8080"; echo "HOST=0.0.0.0"; echo "TRUST_PROXY=1"; echo "TZ=Europe/Madrid"; echo "SECRET=$SECRET"; cat; } > app.env.new
+            mv app.env.new app.env'
+          echo "app.env actualizado"
+
+      - name: Subir código y ficheros de operación
+        if: ${{ !inputs.solo_comprobar }}
+        run: |
+          tar -czf "$RUNNER_TEMP/src.tar.gz" Dockerfile .dockerignore package.json server public
+          sed "s/__APP_HOST__/$APP_HOST/" deploy/m3u-player.caddy.template > "$RUNNER_TEMP/m3u-player.caddy"
+          scp -q "$RUNNER_TEMP/src.tar.gz" "$SERVER:/opt/m3u-player/src.tar.gz"
+          scp -q deploy/server-compose.yml "$SERVER:/opt/m3u-player/docker-compose.yml"
+          scp -q deploy/build-on-server.sh deploy/rollback.sh "$SERVER:/opt/m3u-player/"
+          scp -q "$RUNNER_TEMP/m3u-player.caddy" "$SERVER:/opt/tilestudio/sites/m3u-player.caddy"
+
+      - name: Construir y arrancar
+        id: deploy
+        if: ${{ !inputs.solo_comprobar }}
+        run: |
+          ssh "$SERVER" "chmod +x /opt/m3u-player/*.sh && M3U_IMAGE_TAG='${GITHUB_SHA}' /opt/m3u-player/build-on-server.sh"
+
+      - name: Recargar Caddy
+        if: ${{ !inputs.solo_comprobar }}
+        run: |
+          ssh "$SERVER" 'docker exec tilestudio-caddy-1 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile' || {
+            echo "::error::La configuración de Caddy no es válida; retiro el sitio de M3U Player para no afectar al resto."
+            ssh "$SERVER" 'rm -f /opt/tilestudio/sites/m3u-player.caddy'
+            exit 1
+          }
+          ssh "$SERVER" 'docker exec tilestudio-caddy-1 caddy reload --config /etc/caddy/Caddyfile'
+
+      # Reintenta 2 minutos mientras Caddy obtiene el certificado HTTPS.
+      - name: Smoke test
+        if: ${{ !inputs.solo_comprobar }}
+        run: |
+          for i in $(seq 1 12); do
+            HEALTH=$(curl -sS -o /dev/null -w "%{http_code}" "https://$APP_HOST/health" || true)
+            CFG=$(curl -fsS "https://$APP_HOST/config" || true)
+            PROXY=$(curl -sS -o /dev/null -w "%{http_code}" "https://$APP_HOST/proxy?u=http://example.com/" || true)
+            if [[ "$HEALTH" == "200" && "$CFG" == *'"needsKey":true'* && "$PROXY" == "401" ]]; then
+              echo "Correcto: https://$APP_HOST responde y el proxy exige clave" | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "Intento $i: health=$HEALTH proxy=$PROXY config=$CFG"
+            sleep 10
+          done
+          exit 1
+
+      # Algunos proveedores bloquean IPs de centros de datos: aviso, no error.
+      - name: ¿Llega el VPS a tu proveedor IPTV?
+        if: ${{ !inputs.solo_comprobar }}
+        env:
+          M3U_IPTV_HOSTS: ${{ secrets.M3U_IPTV_HOSTS }}
+        run: |
+          for h in ${M3U_IPTV_HOSTS//,/ }; do
+            CODE=$(ssh "$SERVER" "curl -s -o /dev/null -m 10 -w '%{http_code}' 'http://$h/player_api.php'" || true)
+            if [[ "$CODE" =~ ^(200|401|403)$ ]]; then
+              echo "Proveedor $h: responde desde el VPS (HTTP $CODE)" | tee -a "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning title=Proveedor no accesible::$h no responde desde el VPS (código $CODE). Puede que bloquee IPs de centros de datos."
+            fi
+          done
+
+      - name: Rollback automático si falla
+        if: ${{ failure() && steps.deploy.outcome == 'success' }}
+        run: ssh "$SERVER" '/opt/m3u-player/rollback.sh'

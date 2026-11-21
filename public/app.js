@@ -664,7 +664,7 @@ async function init() {
   $('#key-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const r = await fetch('/auth', { method: 'POST', body: JSON.stringify({ key: $('#key-input').value }) });
-    if (r.ok) location.reload(); else $('#key-error').textContent = 'Clave incorrecta';
+    if (r.ok) location.reload(); else $('#key-error').textContent = r.status === 429 ? await r.text() : 'Clave incorrecta';
   });
 
   if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('sw.js').catch(() => {});

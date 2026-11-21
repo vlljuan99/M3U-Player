@@ -1,0 +1,32 @@
+# M3U Player en el VPS compartido, detrás del Caddy de /opt/tilestudio
+# (igual que Bigotes y tri-dnd). No publica puertos: Caddy le llega por la red
+# externa tilestudio_default.
+#
+# Layout en /opt/m3u-player/:
+#   docker-compose.yml   (este archivo)
+#   app.env              (lo escribe el workflow: ACCESS_KEY, IPTV_HOSTS, SECRET…)
+#   .deploy.env          (qué imagen m3u-player:<sha> se ejecuta)
+
+name: m3u-player
+
+services:
+  app:
+    image: ${M3U_IMAGE:-m3u-player:local}
+    container_name: m3u-player-app
+    restart: unless-stopped
+    env_file:
+      - app.env
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "2" }
+    networks:
+      - tilestudio_default
+
+networks:
+  tilestudio_default:
+    external: true

@@ -16,6 +16,8 @@
  *                  Si está vacío se permite cualquier host (no recomendable si expones el servidor).
  *   ACCESS_KEY     Clave opcional para proteger el acceso a la app/proxy.
  *   SECRET         Secreto para firmar URLs (si no, se genera uno aleatorio al arrancar).
+ *   TRUST_PROXY    "1" si va detrás de un proxy inverso (Caddy/Nginx): usa X-Forwarded-For
+ *                  para limitar intentos de clave por IP.
  */
 'use strict';
 
@@ -37,6 +39,28 @@ const ALLOWED = (process.env.IPTV_HOSTS || '')
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const MAX_REDIRECTS = 5;
 const UA = process.env.USER_AGENT || 'Mozilla/5.0 (M3U-Player)';
+const TRUST_PROXY = process.env.TRUST_PROXY === '1';
+
+// Límite de intentos de clave: 10 fallos por IP cada 15 minutos.
+const AUTH_WINDOW = 15 * 60 * 1000;
+const AUTH_MAX_FAILS = 10;
+const authFails = new Map();
+function clientIp(req) {
+  if (TRUST_PROXY && req.headers['x-forwarded-for']) return req.headers['x-forwarded-for'].split(',')[0].trim();
+  return req.socket.remoteAddress || '';
+}
+function authBlocked(ip) {
+  const e = authFails.get(ip);
+  if (!e) return false;
+  if (Date.now() - e.first > AUTH_WINDOW) { authFails.delete(ip); return false; }
+  return e.count >= AUTH_MAX_FAILS;
+}
+function authFailed(ip) {
+  const e = authFails.get(ip);
+  if (!e || Date.now() - e.first > AUTH_WINDOW) authFails.set(ip, { first: Date.now(), count: 1 });
+  else e.count++;
+  if (authFails.size > 10000) authFails.clear();
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -239,12 +263,14 @@ function handleStatic(req, res, pathname) {
 }
 
 function handleAuth(req, res) {
+  const ip = clientIp(req);
+  if (authBlocked(ip)) return send(res, 429, 'Demasiados intentos. Espera 15 minutos.');
   let body = '';
   req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy(); });
   req.on('end', () => {
     let key = '';
     try { key = JSON.parse(body).key || ''; } catch { /* vacío */ }
-    if (ACCESS_KEY && !safeEqual(key, ACCESS_KEY)) return send(res, 401, 'Clave incorrecta');
+    if (ACCESS_KEY && !safeEqual(key, ACCESS_KEY)) { authFailed(ip); return send(res, 401, 'Clave incorrecta'); }
     const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
     send(res, 200, 'ok', {
       'Set-Cookie': `ak=${encodeURIComponent(key)}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax${secure}`,

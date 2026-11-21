@@ -1,0 +1,15 @@
+# M3U Player (lo genera el workflow a partir de esta plantilla).
+__APP_HOST__ {
+	# El vídeo no se comprime ni se almacena en búfer: se reenvía según llega.
+	@texto not path /proxy*
+	encode @texto zstd gzip
+	reverse_proxy m3u-player-app:8080 {
+		flush_interval -1
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+}

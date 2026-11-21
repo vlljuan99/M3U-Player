@@ -51,6 +51,53 @@ docker run -d --name m3u-player -p 8080:8080 -e IPTV_HOSTS=mi-proveedor.com:8080
 
 En iPhone los directos se piden en formato HLS (`.m3u8`), que Safari reproduce de forma nativa, en segundo plano y con AirPlay.
 
+## Despliegue en el VPS Hetzner (uso fuera de casa)
+
+Igual que Bigotes y el resto de proyectos: vive en el VPS compartido (`167.233.99.156`), detrás del Caddy de `/opt/tilestudio`, en
+
+**https://iptv.167-233-99-156.sslip.io**
+
+(sslip.io resuelve a la IP del VPS, así que no hace falta comprar dominio y Caddy saca el certificado HTTPS solo).
+
+### Una sola vez: secretos en GitHub
+
+*Settings → Secrets and variables → Actions → New repository secret*:
+
+| Secreto | Qué es |
+|---|---|
+| `HETZNER_SSH_KEY` | La clave privada SSH del VPS (la misma que en gatitos, tri-dnd…). Los secretos son por repositorio, hay que volver a añadirla aquí. |
+| `M3U_ACCESS_KEY` | La clave para entrar en la app (16 caracteres o más). |
+| `M3U_IPTV_HOSTS` | `host:puerto` de tu proveedor, p. ej. `proveedor.com:8080` (varios separados por comas). |
+
+### Desplegar
+
+Pestaña **Actions → Deploy to Hetzner → Run workflow**.
+
+- Con **«Solo comprobar el VPS»** marcado, solo informa de disco, memoria, carga y contenedores (en el resumen del job), sin tocar nada.
+- Sin marcarlo: comprueba el VPS (falla si quedan menos de 1,5 GB libres), pasa las pruebas, construye la imagen `m3u-player:<sha>` en el servidor, la arranca, recarga Caddy (validando antes su configuración para no afectar a las otras webs), hace un smoke test por HTTPS y comprueba si el VPS llega a tu proveedor. Si algo falla, vuelve a la imagen anterior.
+
+El contenedor está limitado a 256 MB de RAM y 1 CPU, con sistema de ficheros de solo lectura, y se guardan solo las 3 últimas imágenes.
+
+### En el iPhone
+
+Abre la dirección en Safari, introduce la clave de acceso y después tu servidor, usuario y contraseña. Luego **Compartir → Añadir a pantalla de inicio**.
+
+### Operación
+
+```bash
+ssh root@167.233.99.156
+```
+
+```bash
+cd /opt/m3u-player && ./rollback.sh
+```
+
+```bash
+docker logs --tail 100 m3u-player-app
+```
+
+> Algunos proveedores IPTV bloquean IPs de centros de datos o limitan las conexiones simultáneas. Si el workflow avisa de que el VPS no llega al proveedor, esa es la causa probable.
+
 ## Configuración (variables de entorno)
 
 | Variable | Para qué sirve |
@@ -59,6 +106,7 @@ En iPhone los directos se piden en formato HLS (`.m3u8`), que Safari reproduce d
 | `HOST` | Interfaz de escucha (por defecto `0.0.0.0`, accesible en tu red) |
 | `IPTV_HOSTS` | Hosts permitidos, separados por comas, p. ej. `mi-proveedor.com:8080`. **Recomendado**: sin esta variable el proxy acepta cualquier destino |
 | `ACCESS_KEY` | Clave para entrar en la app. **Obligatoria si expones el servidor a Internet** |
+| `TRUST_PROXY` | `1` detrás de Caddy/Nginx (limita intentos de clave por IP real) |
 | `SECRET` | Secreto para firmar URLs. Si no lo defines, se genera uno al arrancar |
 | `USER_AGENT` | User-Agent que se envía al proveedor (algunos lo exigen) |
 
